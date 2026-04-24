@@ -1,0 +1,137 @@
+name: Build & Release — DeepCore CRM Pro
+
+on:
+  push:
+    tags:
+      - 'v*'          # se activa con: git tag v1.0 && git push --tags
+  workflow_dispatch:  # también se puede lanzar manualmente desde GitHub
+
+jobs:
+  build:
+    name: Build (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: windows-latest
+            asset_name: DeepCoreCRMPro-Windows.zip
+            sep: ";"
+          - os: macos-latest
+            asset_name: DeepCoreCRMPro-Mac.zip
+            sep: ":"
+          - os: ubuntu-latest
+            asset_name: DeepCoreCRMPro-Linux.zip
+            sep: ":"
+
+    steps:
+      - name: Checkout código
+        uses: actions/checkout@v4
+
+      - name: Instalar Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Instalar dependencias del sistema (Linux)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y python3-tk libxcb-cursor0 libxcb1 libx11-6
+
+      - name: Instalar dependencias Python
+        run: |
+          pip install --upgrade pip
+          pip install customtkinter reportlab openpyxl Pillow requests pyinstaller
+
+      - name: Compilar con PyInstaller (Windows)
+        if: matrix.os == 'windows-latest'
+        run: |
+          pyinstaller --name "DeepCore CRM Pro" --windowed --onedir `
+            --add-data "modules;modules" `
+            --hidden-import PIL._tkinter_finder `
+            --hidden-import customtkinter `
+            --hidden-import reportlab `
+            --hidden-import reportlab.graphics `
+            --hidden-import openpyxl `
+            --hidden-import sqlite3 `
+            --hidden-import requests `
+            --hidden-import urllib.request `
+            --hidden-import secrets `
+            --hidden-import unicodedata `
+            --collect-all customtkinter `
+            --collect-all PIL `
+            --collect-all reportlab `
+            main.py
+
+      - name: Compilar con PyInstaller (Mac/Linux)
+        if: matrix.os != 'windows-latest'
+        run: |
+          pyinstaller --name "DeepCore CRM Pro" --windowed --onedir \
+            --add-data "modules:modules" \
+            --hidden-import PIL._tkinter_finder \
+            --hidden-import customtkinter \
+            --hidden-import reportlab \
+            --hidden-import reportlab.graphics \
+            --hidden-import openpyxl \
+            --hidden-import sqlite3 \
+            --hidden-import requests \
+            --hidden-import urllib.request \
+            --hidden-import secrets \
+            --hidden-import unicodedata \
+            --collect-all customtkinter \
+            --collect-all PIL \
+            --collect-all reportlab \
+            main.py
+
+      - name: Comprimir en ZIP (Windows)
+        if: matrix.os == 'windows-latest'
+        run: |
+          Compress-Archive -Path "dist/DeepCore CRM Pro" -DestinationPath "${{ matrix.asset_name }}"
+        shell: pwsh
+
+      - name: Comprimir en ZIP (Mac/Linux)
+        if: matrix.os != 'windows-latest'
+        run: |
+          cd dist && zip -r "../${{ matrix.asset_name }}" "DeepCore CRM Pro"
+
+      - name: Subir artefacto
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset_name }}
+          path: ${{ matrix.asset_name }}
+
+  release:
+    name: Publicar Release
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Descargar todos los artefactos
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Publicar en GitHub Releases
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name || 'v1.0' }}
+          name: DeepCore CRM Pro ${{ github.ref_name || 'v1.0' }}
+          body: |
+            ## DeepCore CRM Pro
+            Sistema de gestión de clientes con pipeline de ventas visual, empresas, actividades y AriaCRM con inteligencia artificial.
+
+            **Instrucciones:**
+            1. Descarga el ZIP para tu sistema operativo
+            2. Extrae la carpeta completa
+            3. Ejecuta `DeepCore CRM Pro.exe` (Windows) o `DeepCore CRM Pro` (Mac/Linux)
+            4. Ingresa tu licencia en Configuración
+
+            **Novedades:**
+            - Importación de clientes desde DeepCore POS
+            - Vista 360° por empresa (contactos + oportunidades)
+            - Pipeline visual con KPIs por etapa
+          files: artifacts/*
+          fail_on_unmatched_files: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
