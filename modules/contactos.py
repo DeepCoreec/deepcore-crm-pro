@@ -3,6 +3,7 @@ import customtkinter as ctk
 from tkinter import messagebox, ttk
 import tkinter as tk
 import database as db
+from modules.pos_import import DialogImportarPOS
 
 
 # ── Constantes de estado ──────────────────────────────────────────────────────
@@ -41,6 +42,11 @@ class ContactosPanel(ctk.CTkFrame):
                       hover_color=self.C['teal'], text_color='#000000',
                       font=ctk.CTkFont(size=13, weight='bold'),
                       command=self._nuevo).pack(side='right', padx=(8, 0))
+        ctk.CTkButton(acc, text="Importar POS", width=110, height=34,
+                      corner_radius=8, fg_color=self.C['surface1'],
+                      hover_color=self.C['surface2'], text_color=self.C['accent'],
+                      font=ctk.CTkFont(size=12),
+                      command=self._importar_pos).pack(side='right', padx=(8, 0))
         ctk.CTkButton(acc, text="Eliminar", width=90, height=34,
                       corner_radius=8, fg_color='transparent',
                       hover_color=self.C['red'], border_width=1,
@@ -183,6 +189,9 @@ class ContactosPanel(ctk.CTkFrame):
 
     def _on_guardado(self):
         self.cargar()
+
+    def _importar_pos(self):
+        DialogImportarPOS(self, self.C, on_importar=self.cargar)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
