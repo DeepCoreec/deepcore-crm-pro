@@ -4,7 +4,7 @@ from datetime import datetime
 import customtkinter as ctk
 import tkinter as tk
 import database as db
-from modules.agent_engine import AgentEngine
+from modules.agent_engine import AgentEngine, ollama_disponible, ollama_modelos
 
 _ACCIONES_RAPIDAS = [
     ("Resumen hoy",  "Dame un resumen ejecutivo del CRM: contactos, pipeline y actividades pendientes."),
@@ -33,7 +33,9 @@ class AgentPanel(ctk.CTkFrame):
         self._historial: list[dict] = []
         self._pensando = False
         self._anim_id  = None
-        self._modelo_var = tk.StringVar(value='haiku')
+        self._modelo_var  = tk.StringVar(value='haiku')
+        self._backend_var = tk.StringVar(value='claude')
+        self._ollama_modelo_var = tk.StringVar(value='llama3.2')
         self._pasos_activos: dict = {}
         self._grupo_herramientas: ctk.CTkFrame | None = None
 
@@ -77,33 +79,45 @@ class AgentPanel(ctk.CTkFrame):
         ctrl = ctk.CTkFrame(hdr, fg_color='transparent')
         ctrl.pack(side='right')
 
-        # Selector de modelo con etiquetas claras
-        ctk.CTkLabel(ctrl, text="Modelo:",
+        # Selector backend: Claude | Ollama
+        ctk.CTkLabel(ctrl, text="Motor:",
                      font=ctk.CTkFont(size=11), text_color=C['overlay2']).pack(side='left')
 
-        seg = ctk.CTkSegmentedButton(
+        self._seg_backend = ctk.CTkSegmentedButton(
             ctrl,
-            values=['Rápido', 'Avanzado'],
-            font=ctk.CTkFont(size=11),
-            height=28,
+            values=['Claude', 'Ollama'],
+            font=ctk.CTkFont(size=11), height=28,
             fg_color=C['surface1'],
             selected_color=C['mauve'],
             selected_hover_color=C['mauve'],
             unselected_color=C['surface1'],
             unselected_hover_color=C['surface2'],
             text_color=C['text'],
-            text_color_disabled=C['overlay2'],
-            command=self._cambiar_modelo_seg,
+            command=self._cambiar_backend,
         )
-        seg.set('Rápido')
-        seg.pack(side='left', padx=(6, 0))
-        self._seg_modelo = seg
+        self._seg_backend.set('Claude')
+        self._seg_backend.pack(side='left', padx=(4, 0))
+
+        # Selector de modelo (cambia según backend)
+        self._opt_modelo = ctk.CTkOptionMenu(
+            ctrl,
+            values=['Rápido (Haiku)', 'Avanzado (Sonnet)'],
+            variable=self._modelo_var,
+            width=160, height=28, corner_radius=6,
+            fg_color=C['surface1'], button_color=C['surface2'],
+            button_hover_color=C['surface1'],
+            dropdown_fg_color=C['surface0'],
+            text_color=C['text'], font=ctk.CTkFont(size=11),
+            command=self._aplicar_modelo,
+        )
+        self._opt_modelo.set('Rápido (Haiku)')
+        self._opt_modelo.pack(side='left', padx=(6, 0))
 
         ctk.CTkButton(ctrl, text="Limpiar", width=70, height=28, corner_radius=6,
                       fg_color='transparent', border_width=1,
                       border_color=C['border'], text_color=C['overlay2'],
                       font=ctk.CTkFont(size=11), hover_color=C['surface1'],
-                      command=self._limpiar_chat).pack(side='left', padx=(10, 0))
+                      command=self._limpiar_chat).pack(side='left', padx=(8, 0))
 
         ctk.CTkFrame(self, fg_color=C['border'], height=1).pack(fill='x', padx=24, pady=12)
 
@@ -173,19 +187,70 @@ class AgentPanel(ctk.CTkFrame):
         api_key = db.obtener_config('api_key') or ''
         self._engine = AgentEngine(
             api_key=api_key,
-            modelo=self._modelo_var.get(),
+            modelo='haiku',
+            backend='claude',
             on_tool_start=self._cb_tool_start,
             on_tool_done=self._cb_tool_done,
             on_datos_cambiados=self._cb_datos_cambiados,
         )
         if not api_key:
             self._lbl_estado.configure(text="● Sin API key", text_color=self.C['yellow'])
+        # Detectar Ollama en background sin bloquear el arranque
+        threading.Thread(target=self._detectar_ollama, daemon=True).start()
 
-    def _cambiar_modelo_seg(self, valor: str):
-        if self._engine:
-            from modules.agent_engine import _MODELOS
-            key = 'haiku' if valor == 'Rápido' else 'sonnet'
-            self._engine.modelo = _MODELOS.get(key, _MODELOS['haiku'])
+    def _detectar_ollama(self):
+        if not ollama_disponible():
+            return
+        modelos = ollama_modelos()
+        if not modelos:
+            return
+        def _actualizar():
+            opciones_claude = ['Rápido (Haiku)', 'Avanzado (Sonnet)']
+            opciones_ollama = [f"Ollama: {m}" for m in modelos[:6]]
+            self._opt_modelo.configure(values=opciones_claude + opciones_ollama)
+        self.after(0, _actualizar)
+
+    def _cambiar_backend(self, valor: str):
+        C = self.C
+        if valor == 'Ollama':
+            self._engine.backend = 'ollama'
+            modelos = ollama_modelos()
+            if modelos:
+                opciones = [f"Ollama: {m}" for m in modelos[:6]]
+                self._opt_modelo.configure(values=opciones)
+                self._opt_modelo.set(opciones[0])
+                self._engine.ollama_modelo = modelos[0]
+            else:
+                self._opt_modelo.configure(values=["Ollama no detectado"])
+                self._opt_modelo.set("Ollama no detectado")
+            self._lbl_estado.configure(text="● Ollama local", text_color=C['green'])
+        else:
+            self._engine.backend = 'claude'
+            self._opt_modelo.configure(values=['Rápido (Haiku)', 'Avanzado (Sonnet)'])
+            self._opt_modelo.set('Rápido (Haiku)')
+            from modules.agent_engine import _MODELOS_CLAUDE
+            self._engine.modelo = _MODELOS_CLAUDE['haiku']
+            api_key = self._engine.api_key
+            color   = C['green'] if (api_key and len(api_key) > 10) else C['yellow']
+            texto   = "● Activo" if (api_key and len(api_key) > 10) else "● Sin API key"
+            self._lbl_estado.configure(text=texto, text_color=color)
+
+    def _aplicar_modelo(self, valor: str):
+        from modules.agent_engine import _MODELOS_CLAUDE
+        if valor.startswith('Ollama: '):
+            self._engine.backend       = 'ollama'
+            self._engine.ollama_modelo = valor[len('Ollama: '):]
+            self._seg_backend.set('Ollama')
+            self._lbl_estado.configure(
+                text="● Ollama local", text_color=self.C['green'])
+        elif 'Haiku' in valor:
+            self._engine.backend = 'claude'
+            self._engine.modelo  = _MODELOS_CLAUDE['haiku']
+            self._seg_backend.set('Claude')
+        elif 'Sonnet' in valor:
+            self._engine.backend = 'claude'
+            self._engine.modelo  = _MODELOS_CLAUDE['sonnet']
+            self._seg_backend.set('Claude')
 
     # ── Enviar mensaje ────────────────────────────────────────────────────────
 

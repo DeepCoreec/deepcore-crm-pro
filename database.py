@@ -1,6 +1,9 @@
 """DeepCore CRM Pro — Base de datos SQLite local cifrada."""
-import sqlite3, os, sys, json, base64, platform, uuid
+import sqlite3, os, sys, json, base64, platform, uuid, hashlib
 from datetime import datetime, date
+
+def _hash_pwd(password: str) -> str:
+    return hashlib.sha256(password.encode('utf-8')).hexdigest()
 
 # ── Cifrado XOR + base64 (clave derivada del hardware) ────────────────────────
 def _clave() -> bytes:
@@ -114,6 +117,18 @@ def inicializar():
             clave TEXT PRIMARY KEY,
             valor TEXT
         );
+
+        -- Usuarios del sistema
+        CREATE TABLE IF NOT EXISTS usuarios (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            nombre        TEXT NOT NULL,
+            apellido      TEXT DEFAULT '',
+            username      TEXT UNIQUE NOT NULL,
+            password_hash TEXT NOT NULL,
+            rol           TEXT DEFAULT 'vendedor',
+            activo        INTEGER DEFAULT 1,
+            created_at    TEXT DEFAULT (datetime('now','localtime'))
+        );
         """)
 
         # Config por defecto
@@ -125,6 +140,56 @@ def inicializar():
         ]
         for k, v in defaults:
             c.execute("INSERT OR IGNORE INTO config VALUES (?,?)", (k, v))
+
+        # Admin por defecto (si no hay usuarios)
+        existe = c.execute("SELECT COUNT(*) FROM usuarios").fetchone()[0]
+        if not existe:
+            c.execute(
+                "INSERT INTO usuarios(nombre,username,password_hash,rol) VALUES(?,?,?,?)",
+                ('Administrador', 'admin', _hash_pwd('admin'), 'admin')
+            )
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  USUARIOS
+# ══════════════════════════════════════════════════════════════════════════════
+
+def validar_credenciales(username: str, password: str) -> dict | None:
+    h = _hash_pwd(password)
+    with get_conn() as c:
+        row = c.execute(
+            "SELECT * FROM usuarios WHERE username=? AND password_hash=? AND activo=1",
+            (username.strip().lower(), h)
+        ).fetchone()
+    return dict(row) if row else None
+
+def listar_usuarios() -> list:
+    with get_conn() as c:
+        return [dict(r) for r in c.execute(
+            "SELECT * FROM usuarios ORDER BY rol DESC, nombre"
+        ).fetchall()]
+
+def crear_usuario(nombre: str, apellido: str, username: str, password: str, rol: str = 'vendedor') -> int:
+    with get_conn() as c:
+        cur = c.execute(
+            "INSERT INTO usuarios(nombre,apellido,username,password_hash,rol) VALUES(?,?,?,?,?)",
+            (nombre, apellido, username.strip().lower(), _hash_pwd(password), rol)
+        )
+        return cur.lastrowid
+
+def actualizar_usuario(uid: int, nombre: str, apellido: str, rol: str):
+    with get_conn() as c:
+        c.execute("UPDATE usuarios SET nombre=?,apellido=?,rol=? WHERE id=?",
+                  (nombre, apellido, rol, uid))
+
+def cambiar_password(uid: int, password_nuevo: str):
+    with get_conn() as c:
+        c.execute("UPDATE usuarios SET password_hash=? WHERE id=?",
+                  (_hash_pwd(password_nuevo), uid))
+
+def toggle_activo_usuario(uid: int):
+    with get_conn() as c:
+        c.execute("UPDATE usuarios SET activo = 1 - activo WHERE id=?", (uid,))
 
 
 # ══════════════════════════════════════════════════════════════════════════════

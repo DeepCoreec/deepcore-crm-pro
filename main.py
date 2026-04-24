@@ -283,15 +283,22 @@ class DashboardPanel(ctk.CTkFrame):
 # ══════════════════════════════════════════════════════════════════════════════
 
 class ConfigPanel(ctk.CTkFrame):
-    def __init__(self, parent, C: dict, aria: AriaCRM, on_cambio=None):
+    def __init__(self, parent, C: dict, aria: AriaCRM, on_cambio=None, es_admin: bool = True):
         super().__init__(parent, fg_color='transparent')
         self.C = C
         self._aria = aria
         self._on_cambio = on_cambio
+        self._es_admin = es_admin
         self._build()
 
     def _build(self):
         C = self.C
+
+        # Pestañas: Configuración | Usuarios (solo admin)
+        tabs = ['Configuración', 'Usuarios'] if self._es_admin else ['Configuración']
+        self._tab_btns: dict[str, ctk.CTkButton] = {}
+        self._tab_frames: dict[str, ctk.CTkFrame] = {}
+        self._tab_activa = ''
 
         hdr = ctk.CTkFrame(self, fg_color='transparent')
         hdr.pack(fill='x', padx=24, pady=(20, 0))
@@ -299,10 +306,51 @@ class ConfigPanel(ctk.CTkFrame):
                      font=ctk.CTkFont(size=22, weight='bold'),
                      text_color=C['heading']).pack(side='left')
 
-        ctk.CTkFrame(self, fg_color=C['border'], height=1).pack(fill='x', padx=24, pady=12)
+        tab_row = ctk.CTkFrame(self, fg_color='transparent')
+        tab_row.pack(fill='x', padx=24, pady=(12, 0))
 
-        scroll = ctk.CTkScrollableFrame(self, fg_color='transparent')
-        scroll.pack(fill='both', expand=True, padx=24, pady=(0, 16))
+        for t in tabs:
+            b = ctk.CTkButton(tab_row, text=t, width=140, height=32, corner_radius=8,
+                              fg_color='transparent', text_color=C['text2'],
+                              hover_color=C['surface1'], font=ctk.CTkFont(size=12),
+                              command=lambda x=t: self._cambiar_tab(x))
+            b.pack(side='left', padx=(0, 6))
+            self._tab_btns[t] = b
+
+        ctk.CTkFrame(self, fg_color=C['border'], height=1).pack(fill='x', padx=24, pady=8)
+
+        # Frame Configuración
+        f_cfg = ctk.CTkFrame(self, fg_color='transparent')
+        self._tab_frames['Configuración'] = f_cfg
+        self._build_config(f_cfg)
+
+        # Frame Usuarios (solo admin)
+        if self._es_admin:
+            from modules.usuarios import GestorUsuarios
+            f_usr = ctk.CTkFrame(self, fg_color='transparent')
+            self._tab_frames['Usuarios'] = f_usr
+            GestorUsuarios(f_usr, C).pack(fill='both', expand=True)
+
+        self._cambiar_tab('Configuración')
+
+    def _cambiar_tab(self, tab: str):
+        C = self.C
+        for t, b in self._tab_btns.items():
+            if t == tab:
+                b.configure(fg_color=C['surface0'], text_color=C['accent'],
+                            font=ctk.CTkFont(size=12, weight='bold'))
+            else:
+                b.configure(fg_color='transparent', text_color=C['text2'],
+                            font=ctk.CTkFont(size=12))
+        if self._tab_activa and self._tab_activa in self._tab_frames:
+            self._tab_frames[self._tab_activa].pack_forget()
+        self._tab_activa = tab
+        self._tab_frames[tab].pack(fill='both', expand=True, padx=24, pady=(0, 16))
+
+    def _build_config(self, parent):
+        C = self.C
+        scroll = ctk.CTkScrollableFrame(parent, fg_color='transparent')
+        scroll.pack(fill='both', expand=True)
 
         def seccion(texto):
             ctk.CTkLabel(scroll, text=texto, font=ctk.CTkFont(size=9, weight='bold'),
@@ -327,7 +375,7 @@ class ConfigPanel(ctk.CTkFrame):
         self._campos.append(campo("RUC", "ruc", ""))
         self._campos.append(campo("Moneda (símbolo)", "moneda", "$", ancho=120))
 
-        seccion("ASISTENTE IA — ALISSON")
+        seccion("ASISTENTE IA — ARIA")
         ctk.CTkLabel(scroll, text="API Key de Claude (Anthropic)",
                      font=ctk.CTkFont(size=12, weight='bold'), text_color=C['text2']).pack(anchor='w', pady=(0, 4))
         self._e_apikey = ctk.CTkEntry(scroll, width=400, height=36, corner_radius=8,
@@ -338,7 +386,7 @@ class ConfigPanel(ctk.CTkFrame):
         self._e_apikey.insert(0, db.get_config('api_key', ''))
         self._e_apikey.pack(anchor='w', pady=(0, 6))
 
-        ctk.CTkLabel(scroll, text="La API key activa el asistente IA Alisson con contexto real de tu CRM.",
+        ctk.CTkLabel(scroll, text="La API key activa el Agente IA con acceso real al CRM.",
                      font=ctk.CTkFont(size=11), text_color=C['overlay2']).pack(anchor='w', pady=(0, 12))
 
         seccion("HARDWARE")
@@ -350,7 +398,6 @@ class ConfigPanel(ctk.CTkFrame):
                      font=ctk.CTkFont(size=12, family='Consolas'), text_color=C['text2']).pack(
                          padx=16, pady=12, anchor='w')
 
-        # Guardar
         ctk.CTkButton(scroll, text="Guardar configuración", width=200, height=40,
                       corner_radius=8, fg_color=C['green'], hover_color=C['teal'],
                       text_color='#000000', font=ctk.CTkFont(size=13, weight='bold'),
@@ -462,6 +509,92 @@ class ChatIAPanel(ctk.CTkFrame):
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+#  VENTANA LOGIN USUARIOS
+# ══════════════════════════════════════════════════════════════════════════════
+
+class VentanaUsuario(ctk.CTkToplevel):
+    """Login de usuario tras validar la licencia."""
+
+    def __init__(self, master, on_ok):
+        super().__init__(master)
+        self.on_ok = on_ok
+        self.title("DeepCore CRM Pro — Iniciar sesión")
+        self.geometry("420x360")
+        self.configure(fg_color=C['base'])
+        self.resizable(False, False)
+        self.grab_set()
+        self.update_idletasks()
+        sw = self.winfo_screenwidth()
+        sh = self.winfo_screenheight()
+        self.geometry(f"+{(sw-420)//2}+{(sh-360)//2}")
+        self._build()
+
+    def _build(self):
+        ctk.CTkFrame(self, fg_color=C['accent'], height=3).pack(fill='x')
+
+        badge = ctk.CTkFrame(self, fg_color=C['accent'], corner_radius=10, width=48, height=36)
+        badge.pack(pady=(20, 0))
+        badge.pack_propagate(False)
+        ctk.CTkLabel(badge, text="CRM", font=ctk.CTkFont(size=14, weight='bold'),
+                     text_color='#000000').place(relx=0.5, rely=0.5, anchor='center')
+
+        ctk.CTkLabel(self, text="Iniciar sesión",
+                     font=ctk.CTkFont(size=20, weight='bold'),
+                     text_color=C['heading']).pack(pady=(10, 2))
+        ctk.CTkLabel(self, text="Ingresa tus credenciales para acceder al CRM",
+                     font=ctk.CTkFont(size=12), text_color=C['text2']).pack()
+
+        ctk.CTkFrame(self, fg_color=C['border'], height=1).pack(fill='x', padx=32, pady=14)
+
+        ctk.CTkLabel(self, text="Usuario", font=ctk.CTkFont(size=11),
+                     text_color=C['text2']).pack(anchor='w', padx=40)
+        self._e_user = ctk.CTkEntry(self, width=340, height=40, corner_radius=10,
+                                    fg_color=C['surface0'], border_color=C['border'],
+                                    border_width=1, text_color=C['text'],
+                                    placeholder_text="admin",
+                                    font=ctk.CTkFont(size=13))
+        self._e_user.pack(pady=(2, 8))
+        self._e_user.bind('<Return>', lambda e: self._e_pwd.focus())
+
+        ctk.CTkLabel(self, text="Contraseña", font=ctk.CTkFont(size=11),
+                     text_color=C['text2']).pack(anchor='w', padx=40)
+        self._e_pwd = ctk.CTkEntry(self, width=340, height=40, corner_radius=10,
+                                   fg_color=C['surface0'], border_color=C['border'],
+                                   border_width=1, text_color=C['text'],
+                                   show='*', font=ctk.CTkFont(size=13))
+        self._e_pwd.pack(pady=(2, 6))
+        self._e_pwd.bind('<Return>', lambda e: self._login())
+
+        self._lbl_err = ctk.CTkLabel(self, text="",
+                                      font=ctk.CTkFont(size=11), text_color=C['red'])
+        self._lbl_err.pack(pady=4)
+
+        ctk.CTkButton(self, text="Entrar", width=220, height=42,
+                      corner_radius=10, fg_color=C['green'], hover_color=C['teal'],
+                      text_color='#000000', font=ctk.CTkFont(size=14, weight='bold'),
+                      command=self._login).pack(pady=4)
+
+        ctk.CTkLabel(self, text="DeepCore Systems  ·  deepcore.ec",
+                     font=ctk.CTkFont(size=10), text_color=C['overlay2']).pack(pady=(8, 0))
+
+        self._e_user.focus()
+
+    def _login(self):
+        username = self._e_user.get().strip()
+        password = self._e_pwd.get().strip()
+        if not username or not password:
+            self._lbl_err.configure(text="Completa usuario y contraseña.")
+            return
+        usuario = db.validar_credenciales(username, password)
+        if usuario:
+            self.destroy()
+            self.on_ok(usuario)
+        else:
+            self._lbl_err.configure(text="Usuario o contraseña incorrectos.")
+            self._e_pwd.delete(0, 'end')
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 #  VENTANA DE LOGIN / LICENCIA
 # ══════════════════════════════════════════════════════════════════════════════
 
@@ -564,6 +697,7 @@ class DeepCoreCRM(ctk.CTk):
         self._agent_panel: AgentPanel | None = None
         self._panel_activo: str = ''
         self._paneles: dict = {}
+        self._usuario_activo: dict | None = None
 
         self._build_topbar()
         self._build_body()
@@ -599,7 +733,11 @@ class DeepCoreCRM(ctk.CTk):
         empresa = db.get_config('empresa', 'Mi Empresa')
         self._lbl_empresa = ctk.CTkLabel(tb, text=empresa,
                                           font=ctk.CTkFont(size=12), text_color=C['text2'])
-        self._lbl_empresa.pack(side='right', padx=16)
+        self._lbl_empresa.pack(side='right', padx=(0, 16))
+
+        self._lbl_usuario = ctk.CTkLabel(tb, text="",
+                                          font=ctk.CTkFont(size=11), text_color=C['accent'])
+        self._lbl_usuario.pack(side='right', padx=(0, 4))
 
         ctk.CTkLabel(tb, text=f"v{APP_VERSION}",
                      font=ctk.CTkFont(size=11), text_color=C['overlay2']).pack(side='right', padx=(0, 8))
@@ -728,7 +866,8 @@ class DeepCoreCRM(ctk.CTk):
             )
             return self._agent_panel
         elif seccion == 'config':
-            return ConfigPanel(self._content, C, self._aria, on_cambio=self._on_config_cambio)
+            es_admin = (self._usuario_activo or {}).get('rol') == 'admin'
+            return ConfigPanel(self._content, C, self._aria, on_cambio=self._on_config_cambio, es_admin=es_admin)
         return ctk.CTkFrame(self._content, fg_color='transparent')
 
     def _on_config_cambio(self):
@@ -764,18 +903,34 @@ class DeepCoreCRM(ctk.CTk):
         key = llave_guardada()
         if not key:
             self.withdraw()
-            VentanaLogin(self, on_ok=self.deiconify)
+            VentanaLogin(self, on_ok=lambda: self._verificar_usuario())
             return
         st = estado_licencia(key)
         if not st['valida']:
             self.withdraw()
-            VentanaLogin(self, on_ok=self.deiconify)
-        elif st.get('advertir'):
-            messagebox.showwarning(
-                "Licencia",
-                f"{st['mensaje']}\n\nRenueva tu licencia en deepcore.ec",
-                parent=self
-            )
+            VentanaLogin(self, on_ok=lambda: self._verificar_usuario())
+        else:
+            if st.get('advertir'):
+                messagebox.showwarning(
+                    "Licencia",
+                    f"{st['mensaje']}\n\nRenueva tu licencia en deepcore.ec",
+                    parent=self
+                )
+            self._verificar_usuario()
+
+    def _verificar_usuario(self):
+        self.withdraw()
+        VentanaUsuario(self, on_ok=self._on_login_ok)
+
+    def _on_login_ok(self, usuario: dict):
+        self._usuario_activo = usuario
+        nombre = f"{usuario['nombre']} {usuario.get('apellido','')  }".strip()
+        rol    = usuario.get('rol', 'vendedor')
+        self._lbl_usuario.configure(text=f"● {nombre}  [{rol}]")
+        # Ocultar Configuración para vendedores
+        if rol != 'admin' and 'config' in self._nav_btns:
+            self._nav_btns['config'].pack_forget()
+        self.deiconify()
 
     # ── Auto-updater ──────────────────────────────────────────────────────────
 
