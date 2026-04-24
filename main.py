@@ -33,6 +33,7 @@ from modules.pipeline    import PipelinePanel
 from modules.actividades import ActividadesPanel
 from modules.reportes    import ReportesPanel
 from modules.deepcore_assistant import AriaCRM
+from modules.agent_panel import AgentPanel
 
 try:
     from deepcore_monitor import crear_monitor as _crear_monitor
@@ -555,6 +556,7 @@ class DeepCoreCRM(ctk.CTk):
         db.inicializar()
 
         self._aria: AriaCRM | None = None
+        self._agent_panel: AgentPanel | None = None
         self._panel_activo: str = ''
         self._paneles: dict = {}
 
@@ -715,7 +717,11 @@ class DeepCoreCRM(ctk.CTk):
         elif seccion == 'reportes':
             return ReportesPanel(self._content, C)
         elif seccion == 'chatia':
-            return ChatIAPanel(self._content, C, self._aria)
+            self._agent_panel = AgentPanel(
+                self._content, C,
+                on_datos_cambiados=self._refrescar_paneles_activos
+            )
+            return self._agent_panel
         elif seccion == 'config':
             return ConfigPanel(self._content, C, self._aria, on_cambio=self._on_config_cambio)
         return ctk.CTkFrame(self._content, fg_color='transparent')
@@ -723,6 +729,29 @@ class DeepCoreCRM(ctk.CTk):
     def _on_config_cambio(self):
         empresa = db.get_config('empresa', 'Mi Empresa')
         self._lbl_empresa.configure(text=empresa)
+        # Propagar nueva API key al AgentPanel si está activo
+        api_key = db.get_config('api_key', '')
+        if hasattr(self, '_agent_panel') and self._agent_panel:
+            try:
+                self._agent_panel.actualizar_api_key(api_key)
+            except Exception:
+                pass
+
+    def _refrescar_paneles_activos(self):
+        """Refresca el panel activo cuando el agente modifica datos."""
+        panel = self._paneles.get(self._panel_activo)
+        if panel and hasattr(panel, 'cargar'):
+            try:
+                panel.cargar()
+            except Exception:
+                pass
+        # Siempre refrescar el dashboard si está en memoria
+        dashboard = self._paneles.get('dashboard')
+        if dashboard and hasattr(dashboard, 'cargar') and self._panel_activo != 'dashboard':
+            try:
+                dashboard.cargar()
+            except Exception:
+                pass
 
     # ── Licencia ──────────────────────────────────────────────────────────────
 
