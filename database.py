@@ -266,7 +266,7 @@ def crear_oportunidad(nombre, contacto_id=None, empresa_id=None, valor=0,
         )
         return cur.lastrowid
 
-def listar_oportunidades(etapa: str = '', busqueda: str = '') -> list:
+def listar_oportunidades(etapa: str = '', busqueda: str = '', empresa_id: int = None) -> list:
     sql = """
         SELECT o.*, c.nombre as contacto_nombre, c.apellido as contacto_apellido,
                e.nombre as empresa_nombre
@@ -279,6 +279,9 @@ def listar_oportunidades(etapa: str = '', busqueda: str = '') -> list:
     if etapa:
         sql += " AND o.etapa=?"
         params.append(etapa)
+    if empresa_id is not None:
+        sql += " AND o.empresa_id=?"
+        params.append(empresa_id)
     if busqueda:
         sql += " AND (o.nombre LIKE ? OR c.nombre LIKE ? OR e.nombre LIKE ?)"
         params += [f'%{busqueda}%'] * 3

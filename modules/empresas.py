@@ -3,6 +3,7 @@ import customtkinter as ctk
 from tkinter import messagebox, ttk
 import tkinter as tk
 import database as db
+from modules.vista_empresa import VistaEmpresa
 
 INDUSTRIAS = [
     'Tecnología', 'Comercio', 'Manufactura', 'Salud', 'Educación',
@@ -45,7 +46,11 @@ class EmpresasPanel(ctk.CTkFrame):
         ctk.CTkButton(acc, text="Editar", width=80, height=34,
                       corner_radius=8, fg_color=self.C['surface1'],
                       hover_color=self.C['surface2'], text_color=self.C['text'],
-                      font=ctk.CTkFont(size=12), command=self._editar).pack(side='right')
+                      font=ctk.CTkFont(size=12), command=self._editar).pack(side='right', padx=(8, 0))
+        ctk.CTkButton(acc, text="Ver 360°", width=80, height=34,
+                      corner_radius=8, fg_color=self.C['surface0'],
+                      hover_color=self.C['surface1'], text_color=self.C['accent'],
+                      font=ctk.CTkFont(size=12), command=self._ver_empresa).pack(side='right')
 
         ctk.CTkFrame(self, fg_color=self.C['border'], height=1).pack(fill='x', padx=24, pady=12)
 
@@ -109,7 +114,7 @@ class EmpresasPanel(ctk.CTkFrame):
         vsb.pack(side='right', fill='y', pady=8, padx=(0, 8))
         self._tree.pack(fill='both', expand=True, padx=8, pady=8)
         self._tree.bind('<<TreeviewSelect>>', self._on_select)
-        self._tree.bind('<Double-1>', lambda e: self._editar())
+        self._tree.bind('<Double-1>', lambda e: self._ver_empresa())
 
         self._ids: list[int] = []
 
@@ -139,6 +144,12 @@ class EmpresasPanel(ctk.CTkFrame):
         if sel:
             idx = self._tree.index(sel[0])
             self._sel_id = self._ids[idx] if idx < len(self._ids) else None
+
+    def _ver_empresa(self):
+        if not self._sel_id:
+            messagebox.showwarning("Sin selección", "Selecciona una empresa primero.", parent=self)
+            return
+        VistaEmpresa(self, self.C, empresa_id=self._sel_id)
 
     def _nueva(self):
         FormEmpresa(self, self.C, on_guardar=self.cargar)
