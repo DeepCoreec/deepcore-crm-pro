@@ -126,27 +126,29 @@ class DashboardPanel(ctk.CTkFrame):
                             border_width=1, border_color=self.C['border'])
         card.grid(row=0, column=col, padx=6, pady=0, sticky='nsew')
 
-        inner = ctk.CTkFrame(card, fg_color='transparent')
-        inner.pack(fill='both', expand=True, padx=16, pady=14)
+        # Barra superior de color
+        ctk.CTkFrame(card, fg_color=color, height=3,
+                     corner_radius=0).pack(fill='x')
 
-        # Fila superior: label + ícono
+        inner = ctk.CTkFrame(card, fg_color='transparent')
+        inner.pack(fill='both', expand=True, padx=16, pady=12)
+
+        # Fila superior: label + ícono circular
         top = ctk.CTkFrame(inner, fg_color='transparent')
         top.pack(fill='x')
-        ctk.CTkLabel(top, text=titulo, font=ctk.CTkFont(size=13),
+        ctk.CTkLabel(top, text=titulo, font=ctk.CTkFont(size=11),
                      text_color=self.C['text2']).pack(side='left')
-        ico_bg = ctk.CTkFrame(top, fg_color=self.C['surface1'],
-                              corner_radius=8, width=32, height=32)
+        ico_bg = ctk.CTkFrame(top, fg_color=color + '22' if len(color) == 7 else self.C['surface1'],
+                              corner_radius=16, width=32, height=32)
         ico_bg.pack(side='right')
         ico_bg.pack_propagate(False)
-        ctk.CTkLabel(ico_bg, text=icono, font=ctk.CTkFont(size=16),
+        ctk.CTkLabel(ico_bg, text=icono, font=ctk.CTkFont(size=13, weight='bold'),
                      text_color=color).place(relx=0.5, rely=0.5, anchor='center')
 
-        # Franja de color
-        ctk.CTkFrame(inner, fg_color=color, height=2, corner_radius=1
-                     ).pack(fill='x', pady=(8, 4))
+        # Número grande
         ctk.CTkLabel(inner, text=str(valor),
-                     font=ctk.CTkFont(size=30, weight='bold'),
-                     text_color=color, anchor='w').pack(fill='x')
+                     font=ctk.CTkFont(size=28, weight='bold'),
+                     text_color=color, anchor='w').pack(fill='x', pady=(8, 0))
 
     def _tabla_simple(self, frame, titulo, filas: list, cols_labels: list):
         for w in frame.winfo_children():
@@ -229,6 +231,9 @@ class DashboardPanel(ctk.CTkFrame):
 
             ctk.CTkLabel(col_fr, text=etapa,
                          font=ctk.CTkFont(size=9), text_color=self.C['text2']).pack()
+
+    def cargar(self):
+        self.refrescar()
 
     def refrescar(self):
         stats  = db.stats_dashboard()

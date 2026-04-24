@@ -92,6 +92,12 @@ class ThemeManager:
             'verde':     '#10B981',
             'amarillo':  '#F59E0B',
             'rojo':      '#EF4444',
+            # Extras usados por agent_panel y otros módulos
+            'mauve':     '#C084FC',
+            'crust':     '#080809',
+            'yellow':    '#F59E0B',
+            'lavender':  '#818CF8',
+            'peach':     '#FB923C',
         }
 
     def set_accent(self, color: str):

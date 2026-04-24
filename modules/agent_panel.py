@@ -1,25 +1,29 @@
 """DeepCore CRM Pro — Panel del Agente IA con ejecución real de herramientas."""
 import threading
+from datetime import datetime
 import customtkinter as ctk
 import tkinter as tk
 import database as db
 from modules.agent_engine import AgentEngine
 
 _ACCIONES_RAPIDAS = [
-    ("Resumen hoy",    "Dame un resumen ejecutivo del CRM: contactos, pipeline y actividades pendientes."),
-    ("Pendientes",     "¿Qué actividades tengo pendientes? Ordénalas por prioridad y dime cuál hacer primero."),
-    ("Pipeline",       "Analiza mi pipeline de ventas. ¿Qué oportunidades están en riesgo? ¿Cuál tiene más valor?"),
-    ("Alertas",        "Identifica alertas críticas: oportunidades sin actividad reciente, contactos fríos y tareas vencidas."),
+    ("Resumen hoy",  "Dame un resumen ejecutivo del CRM: contactos, pipeline y actividades pendientes."),
+    ("Pendientes",   "¿Qué actividades tengo pendientes? Ordénalas por prioridad y dime cuál hacer primero."),
+    ("Pipeline",     "Analiza mi pipeline de ventas. ¿Qué oportunidades están en riesgo? ¿Cuál tiene más valor?"),
+    ("Alertas",      "Identifica alertas críticas: oportunidades sin actividad reciente, contactos fríos y tareas vencidas."),
 ]
 
-# Colores de herramientas en el UI
 _COLOR_CORRIENDO = '#F59E0B'
 _COLOR_OK        = '#10B981'
 _COLOR_ERROR     = '#EF4444'
 
 
+def _ts() -> str:
+    return datetime.now().strftime('%H:%M')
+
+
 class AgentPanel(ctk.CTkFrame):
-    """Panel principal del Agente IA — reemplaza al chatbot básico."""
+    """Panel del Agente IA — conversación con ejecución real de herramientas."""
 
     def __init__(self, parent, C: dict, on_datos_cambiados=None):
         super().__init__(parent, fg_color='transparent')
@@ -30,6 +34,8 @@ class AgentPanel(ctk.CTkFrame):
         self._pensando = False
         self._anim_id  = None
         self._modelo_var = tk.StringVar(value='haiku')
+        self._pasos_activos: dict = {}
+        self._grupo_herramientas: ctk.CTkFrame | None = None
 
         self._build()
         self._inicializar_engine()
@@ -40,14 +46,17 @@ class AgentPanel(ctk.CTkFrame):
     def _build(self):
         C = self.C
 
+        # Franja superior de acento
+        ctk.CTkFrame(self, fg_color=C['mauve'], height=3, corner_radius=0).pack(fill='x')
+
         # ── Cabecera ──────────────────────────────────────────────────────────
         hdr = ctk.CTkFrame(self, fg_color='transparent')
-        hdr.pack(fill='x', padx=24, pady=(20, 0))
+        hdr.pack(fill='x', padx=24, pady=(16, 0))
 
-        # Título + badge
         title_row = ctk.CTkFrame(hdr, fg_color='transparent')
         title_row.pack(side='left', fill='y')
 
+        # Badge IA
         badge = ctk.CTkFrame(title_row, fg_color=C['mauve'], corner_radius=6,
                               width=32, height=24)
         badge.pack(side='left', pady=4)
@@ -64,21 +73,32 @@ class AgentPanel(ctk.CTkFrame):
                                          text_color=C['green'])
         self._lbl_estado.pack(side='left', padx=(12, 0), pady=(4, 0))
 
-        # Controles derecha
+        # Controles lado derecho
         ctrl = ctk.CTkFrame(hdr, fg_color='transparent')
         ctrl.pack(side='right')
 
+        # Selector de modelo con etiquetas claras
         ctk.CTkLabel(ctrl, text="Modelo:",
                      font=ctk.CTkFont(size=11), text_color=C['overlay2']).pack(side='left')
-        ctk.CTkOptionMenu(ctrl,
-                          values=['haiku', 'sonnet'],
-                          variable=self._modelo_var,
-                          width=90, height=28, corner_radius=6,
-                          fg_color=C['surface1'], button_color=C['surface2'],
-                          button_hover_color=C['surface1'],
-                          dropdown_fg_color=C['surface0'],
-                          text_color=C['text'], font=ctk.CTkFont(size=11),
-                          command=self._cambiar_modelo).pack(side='left', padx=(6, 0))
+
+        seg = ctk.CTkSegmentedButton(
+            ctrl,
+            values=['Rápido', 'Avanzado'],
+            font=ctk.CTkFont(size=11),
+            height=28,
+            fg_color=C['surface1'],
+            selected_color=C['mauve'],
+            selected_hover_color=C['mauve'],
+            unselected_color=C['surface1'],
+            unselected_hover_color=C['surface2'],
+            text_color=C['text'],
+            text_color_disabled=C['overlay2'],
+            command=self._cambiar_modelo_seg,
+        )
+        seg.set('Rápido')
+        seg.pack(side='left', padx=(6, 0))
+        self._seg_modelo = seg
+
         ctk.CTkButton(ctrl, text="Limpiar", width=70, height=28, corner_radius=6,
                       fg_color='transparent', border_width=1,
                       border_color=C['border'], text_color=C['overlay2'],
@@ -95,16 +115,20 @@ class AgentPanel(ctk.CTkFrame):
                      text_color=C['overlay2']).pack(anchor='w', pady=(0, 6))
         btns_row = ctk.CTkFrame(acc, fg_color='transparent')
         btns_row.pack(anchor='w')
-        for label, prompt in _ACCIONES_RAPIDAS:
-            ctk.CTkButton(btns_row, text=label, width=110, height=30,
-                          corner_radius=6, fg_color=C['surface0'],
-                          hover_color=C['surface1'], border_width=1,
-                          border_color=C['border'], text_color=C['mauve'],
-                          font=ctk.CTkFont(size=11, weight='bold'),
-                          command=lambda p=prompt: self._enviar(p)
-                          ).pack(side='left', padx=(0, 6))
 
-        # ── Área de conversación ──────────────────────────────────────────────
+        _ACC_COLORS = [C['mauve'], C['blue'], C['green'], C['amber']]
+        for i, (label, prompt) in enumerate(_ACCIONES_RAPIDAS):
+            col = _ACC_COLORS[i % len(_ACC_COLORS)]
+            ctk.CTkButton(
+                btns_row, text=label, width=108, height=30,
+                corner_radius=6, fg_color=C['surface0'],
+                hover_color=C['surface1'], border_width=1,
+                border_color=col, text_color=col,
+                font=ctk.CTkFont(size=11, weight='bold'),
+                command=lambda p=prompt: self._enviar(p)
+            ).pack(side='left', padx=(0, 6))
+
+        # ── Conversación ──────────────────────────────────────────────────────
         self._scroll = ctk.CTkScrollableFrame(
             self, fg_color=C['surface0'],
             corner_radius=12, border_width=1, border_color=C['border'])
@@ -117,6 +141,8 @@ class AgentPanel(ctk.CTkFrame):
                                    corner_radius=12, border_width=1,
                                    border_color=C['border'])
         input_frame.pack(fill='x', padx=24, pady=(0, 16))
+        input_frame.bind('<FocusIn>',  lambda e: input_frame.configure(border_color=C['mauve']))
+        input_frame.bind('<FocusOut>', lambda e: input_frame.configure(border_color=C['border']))
 
         self._entry = ctk.CTkEntry(
             input_frame,
@@ -129,11 +155,13 @@ class AgentPanel(ctk.CTkFrame):
         )
         self._entry.pack(side='left', fill='x', expand=True, padx=(12, 6), pady=6)
         self._entry.bind('<Return>', lambda e: self._enviar())
+        self._entry.bind('<FocusIn>',  lambda e: input_frame.configure(border_color=C['mauve']))
+        self._entry.bind('<FocusOut>', lambda e: input_frame.configure(border_color=C['border']))
 
         self._btn_enviar = ctk.CTkButton(
             input_frame, text="Enviar", width=90, height=36,
             corner_radius=8, fg_color=C['mauve'],
-            hover_color='#A855F7', text_color='#000000',
+            hover_color='#A855F7', text_color='#FFFFFF',
             font=ctk.CTkFont(size=13, weight='bold'),
             command=self._enviar
         )
@@ -143,10 +171,9 @@ class AgentPanel(ctk.CTkFrame):
 
     def _inicializar_engine(self):
         api_key = db.obtener_config('api_key') or ''
-        modelo  = self._modelo_var.get()
         self._engine = AgentEngine(
             api_key=api_key,
-            modelo=modelo,
+            modelo=self._modelo_var.get(),
             on_tool_start=self._cb_tool_start,
             on_tool_done=self._cb_tool_done,
             on_datos_cambiados=self._cb_datos_cambiados,
@@ -154,10 +181,11 @@ class AgentPanel(ctk.CTkFrame):
         if not api_key:
             self._lbl_estado.configure(text="● Sin API key", text_color=self.C['yellow'])
 
-    def _cambiar_modelo(self, valor):
+    def _cambiar_modelo_seg(self, valor: str):
         if self._engine:
             from modules.agent_engine import _MODELOS
-            self._engine.modelo = _MODELOS.get(valor, _MODELOS['haiku'])
+            key = 'haiku' if valor == 'Rápido' else 'sonnet'
+            self._engine.modelo = _MODELOS.get(key, _MODELOS['haiku'])
 
     # ── Enviar mensaje ────────────────────────────────────────────────────────
 
@@ -173,14 +201,13 @@ class AgentPanel(ctk.CTkFrame):
         self._iniciar_pensando()
         self._pensando = True
         self._btn_enviar.configure(state='disabled', text='...')
+        self._grupo_herramientas = None
 
         def worker():
             try:
                 respuesta = self._engine.ejecutar(msg, list(self._historial))
-                # Actualizar historial con el par
                 self._historial.append({"role": "user",      "content": msg})
                 self._historial.append({"role": "assistant", "content": respuesta})
-                # Mantener solo últimas 10 interacciones para no inflar tokens
                 if len(self._historial) > 20:
                     self._historial = self._historial[-20:]
                 self.after(0, lambda: self._mostrar_respuesta(respuesta))
@@ -191,7 +218,7 @@ class AgentPanel(ctk.CTkFrame):
 
         threading.Thread(target=worker, daemon=True).start()
 
-    # ── Callbacks de herramientas (desde hilo secundario → hilo UI) ───────────
+    # ── Callbacks herramientas (hilo secundario → hilo UI) ────────────────────
 
     def _cb_tool_start(self, nombre_legible: str):
         self.after(0, lambda: self._agregar_paso(nombre_legible, 'corriendo'))
@@ -203,7 +230,7 @@ class AgentPanel(ctk.CTkFrame):
         if self._on_datos_cambiados:
             self.after(0, self._on_datos_cambiados)
 
-    # ── Renderizado de mensajes ───────────────────────────────────────────────
+    # ── Renderizado ───────────────────────────────────────────────────────────
 
     def _mostrar_bienvenida(self):
         texto = (
@@ -217,68 +244,115 @@ class AgentPanel(ctk.CTkFrame):
     def _agregar_burbuja_usuario(self, texto: str):
         C = self.C
         outer = ctk.CTkFrame(self._scroll, fg_color='transparent')
-        outer.grid(row=self._scroll_row, column=0, sticky='e', padx=(60, 12), pady=(6, 2))
+        outer.grid(row=self._scroll_row, column=0, sticky='e', padx=(80, 12), pady=(6, 2))
         self._scroll_row += 1
+
+        # Timestamp
+        ctk.CTkLabel(outer, text=_ts(), font=ctk.CTkFont(size=9),
+                     text_color=C['overlay2']).pack(anchor='e', padx=4, pady=(0, 2))
 
         burbuja = ctk.CTkFrame(outer, fg_color=C['surface1'],
                                 corner_radius=14, border_width=1,
                                 border_color=C['surface2'])
         burbuja.pack(anchor='e')
         ctk.CTkLabel(burbuja, text=texto, font=ctk.CTkFont(size=12),
-                     text_color=C['text'], wraplength=400,
+                     text_color=C['text'], wraplength=380,
                      justify='left').pack(padx=14, pady=10)
         self._scroll_to_bottom()
 
     def _agregar_burbuja_agente(self, texto: str):
         C = self.C
         outer = ctk.CTkFrame(self._scroll, fg_color='transparent')
-        outer.grid(row=self._scroll_row, column=0, sticky='w', padx=(12, 60), pady=(2, 6))
+        outer.grid(row=self._scroll_row, column=0, sticky='w', padx=(12, 80), pady=(2, 6))
         self._scroll_row += 1
 
         row = ctk.CTkFrame(outer, fg_color='transparent')
         row.pack(anchor='w')
 
-        # Avatar
+        # Avatar Aria
         av = ctk.CTkFrame(row, fg_color=C['mauve'], corner_radius=6,
-                           width=26, height=26)
-        av.pack(side='left', anchor='n', pady=(2, 0))
+                           width=28, height=28)
+        av.pack(side='left', anchor='n', pady=(18, 0))
         av.pack_propagate(False)
         ctk.CTkLabel(av, text="A", font=ctk.CTkFont(size=11, weight='bold'),
                      text_color='#000000').place(relx=0.5, rely=0.5, anchor='center')
 
-        burbuja = ctk.CTkFrame(row, fg_color=C['crust'],
-                                corner_radius=14, border_width=1,
-                                border_color='#3B2D6B')
-        burbuja.pack(side='left', padx=(8, 0))
+        right = ctk.CTkFrame(row, fg_color='transparent')
+        right.pack(side='left', padx=(8, 0))
+
+        # Nombre + timestamp
+        meta = ctk.CTkFrame(right, fg_color='transparent')
+        meta.pack(anchor='w', pady=(0, 2))
+        ctk.CTkLabel(meta, text="Aria",
+                     font=ctk.CTkFont(size=10, weight='bold'),
+                     text_color=C['mauve']).pack(side='left')
+        ctk.CTkLabel(meta, text=f"  {_ts()}",
+                     font=ctk.CTkFont(size=9),
+                     text_color=C['overlay2']).pack(side='left')
+
+        # Burbuja con borde izquierdo mauve
+        wrapper = ctk.CTkFrame(right, fg_color='transparent')
+        wrapper.pack(anchor='w')
+
+        accent_bar = ctk.CTkFrame(wrapper, fg_color=C['mauve'], width=3, corner_radius=2)
+        accent_bar.pack(side='left', fill='y')
+
+        burbuja = ctk.CTkFrame(wrapper, fg_color=C['crust'],
+                                corner_radius=12, border_width=1,
+                                border_color=C['surface1'])
+        burbuja.pack(side='left')
         ctk.CTkLabel(burbuja, text=texto, font=ctk.CTkFont(size=12),
-                     text_color=C['text'], wraplength=420,
+                     text_color=C['text'], wraplength=400,
                      justify='left').pack(padx=14, pady=10)
         self._scroll_to_bottom()
 
     # ── Pasos de herramientas ─────────────────────────────────────────────────
 
-    _pasos_activos: dict = {}
+    def _asegurar_grupo_herramientas(self):
+        """Crea o retorna el contenedor agrupado de pasos de herramientas."""
+        if self._grupo_herramientas is None or not self._grupo_herramientas.winfo_exists():
+            C = self.C
+            outer = ctk.CTkFrame(self._scroll, fg_color='transparent')
+            outer.grid(row=self._scroll_row, column=0, sticky='ew', padx=(48, 80), pady=(4, 4))
+            self._scroll_row += 1
+
+            grupo = ctk.CTkFrame(outer, fg_color=C['surface0'],
+                                  corner_radius=8, border_width=1,
+                                  border_color=C['border'])
+            grupo.pack(fill='x')
+
+            ctk.CTkLabel(grupo, text="Acciones del agente",
+                         font=ctk.CTkFont(size=9, weight='bold'),
+                         text_color=C['overlay2']).pack(anchor='w', padx=12, pady=(8, 4))
+
+            self._grupo_herramientas = grupo
+            self._grupo_contenido = ctk.CTkFrame(grupo, fg_color='transparent')
+            self._grupo_contenido.pack(fill='x', padx=12, pady=(0, 8))
+
+        return self._grupo_contenido
 
     def _agregar_paso(self, nombre: str, estado: str):
         C = self.C
-        frame = ctk.CTkFrame(self._scroll, fg_color='transparent')
-        frame.grid(row=self._scroll_row, column=0, sticky='ew', padx=32, pady=1)
-        self._scroll_row += 1
+        contenido = self._asegurar_grupo_herramientas()
 
-        lbl = ctk.CTkLabel(frame,
-                            text=f"  ⟳ {nombre}...",
+        fila = ctk.CTkFrame(contenido, fg_color='transparent')
+        fila.pack(fill='x', pady=1)
+
+        lbl = ctk.CTkLabel(fila,
+                            text=f"  ⟳  {nombre}",
                             font=ctk.CTkFont(size=11),
-                            text_color=_COLOR_CORRIENDO)
-        lbl.pack(anchor='w')
+                            text_color=_COLOR_CORRIENDO,
+                            anchor='w')
+        lbl.pack(side='left')
         self._pasos_activos[nombre] = lbl
         self._scroll_to_bottom()
 
     def _actualizar_paso(self, nombre: str, ok: bool):
         lbl = self._pasos_activos.get(nombre)
-        if lbl:
-            icono = '✓' if ok else '✗'
+        if lbl and lbl.winfo_exists():
+            icono = '  ✓  ' if ok else '  ✗  '
             color = _COLOR_OK if ok else _COLOR_ERROR
-            lbl.configure(text=f"  {icono} {nombre}", text_color=color,
+            lbl.configure(text=f"{icono}{nombre}", text_color=color,
                           font=ctk.CTkFont(size=11))
         self._scroll_to_bottom()
 
@@ -288,13 +362,20 @@ class AgentPanel(ctk.CTkFrame):
         C = self.C
         self._pensando_frame = ctk.CTkFrame(self._scroll, fg_color='transparent')
         self._pensando_frame.grid(row=self._scroll_row, column=0, sticky='w',
-                                   padx=(46, 60), pady=(2, 6))
+                                   padx=(54, 80), pady=(4, 4))
         self._scroll_row += 1
+
+        inner = ctk.CTkFrame(self._pensando_frame,
+                              fg_color=C['surface0'],
+                              corner_radius=10, border_width=1,
+                              border_color=C['border'])
+        inner.pack(anchor='w')
+
         self._pensando_lbl = ctk.CTkLabel(
-            self._pensando_frame, text="Pensando.",
-            font=ctk.CTkFont(size=12, weight='bold'),
+            inner, text="Pensando   ",
+            font=ctk.CTkFont(size=12),
             text_color=C['mauve'])
-        self._pensando_lbl.pack(anchor='w')
+        self._pensando_lbl.pack(padx=14, pady=8)
         self._anim_paso = 0
         self._animar_pensando()
         self._scroll_to_bottom()
@@ -302,13 +383,13 @@ class AgentPanel(ctk.CTkFrame):
     def _animar_pensando(self):
         if not self._pensando:
             return
-        puntos = ['Pensando.', 'Pensando..', 'Pensando...']
+        frames = ['Pensando   ', 'Pensando .  ', 'Pensando .. ', 'Pensando ...']
         try:
-            self._pensando_lbl.configure(text=puntos[self._anim_paso % 3])
+            self._pensando_lbl.configure(text=frames[self._anim_paso % len(frames)])
         except Exception:
             return
         self._anim_paso += 1
-        self._anim_id = self.after(400, self._animar_pensando)
+        self._anim_id = self.after(380, self._animar_pensando)
 
     def _detener_pensando(self):
         if self._anim_id:
@@ -323,19 +404,19 @@ class AgentPanel(ctk.CTkFrame):
 
     def _mostrar_respuesta(self, texto: str):
         self._detener_pensando()
+        self._grupo_herramientas = None
         self._agregar_burbuja_agente(texto)
 
     def _mostrar_error(self, texto: str):
         self._detener_pensando()
         C = self.C
         frame = ctk.CTkFrame(self._scroll, fg_color='transparent')
-        frame.grid(row=self._scroll_row, column=0, sticky='ew',
-                   padx=24, pady=4)
+        frame.grid(row=self._scroll_row, column=0, sticky='ew', padx=24, pady=4)
         self._scroll_row += 1
-        burbuja = ctk.CTkFrame(frame, fg_color='#2D0E0E', corner_radius=10,
+        burbuja = ctk.CTkFrame(frame, fg_color='#1a0808', corner_radius=10,
                                 border_width=1, border_color=C['red'])
         burbuja.pack(anchor='w')
-        ctk.CTkLabel(burbuja, text=f"Error: {texto}",
+        ctk.CTkLabel(burbuja, text=f"  ✗  {texto}",
                      font=ctk.CTkFont(size=11), text_color=C['red'],
                      wraplength=460, justify='left').pack(padx=12, pady=8)
         self._scroll_to_bottom()
@@ -345,13 +426,14 @@ class AgentPanel(ctk.CTkFrame):
     def _limpiar_chat(self):
         for w in self._scroll.winfo_children():
             w.destroy()
-        self._scroll_row  = 0
-        self._historial   = []
+        self._scroll_row = 0
+        self._historial  = []
         self._pasos_activos.clear()
+        self._grupo_herramientas = None
         self._mostrar_bienvenida()
 
     def _scroll_to_bottom(self):
-        self.after(50, lambda: self._scroll._parent_canvas.yview_moveto(1.0))
+        self.after(60, lambda: self._scroll._parent_canvas.yview_moveto(1.0))
 
     def actualizar_api_key(self, nueva_key: str):
         """Llamar desde ConfigPanel cuando el usuario guarda una nueva API key."""
