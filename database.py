@@ -129,6 +129,24 @@ def inicializar():
             activo        INTEGER DEFAULT 1,
             created_at    TEXT DEFAULT (datetime('now','localtime'))
         );
+
+        -- Documentos adjuntos (contratos, propuestas, PDFs)
+        CREATE TABLE IF NOT EXISTS documentos (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            empresa_id  INTEGER REFERENCES empresas(id) ON DELETE CASCADE,
+            contacto_id INTEGER REFERENCES contactos(id) ON DELETE SET NULL,
+            nombre      TEXT NOT NULL,
+            ruta        TEXT DEFAULT '',
+            texto       TEXT DEFAULT '',
+            tipo        TEXT DEFAULT 'pdf',
+            tamanio_kb  INTEGER DEFAULT 0,
+            created_at  TEXT DEFAULT (datetime('now','localtime'))
+        );
+
+        -- FTS5 para búsqueda de texto completo en documentos
+        CREATE VIRTUAL TABLE IF NOT EXISTS documentos_fts
+            USING fts5(nombre, texto, empresa_id UNINDEXED, doc_id UNINDEXED,
+                       tokenize='unicode61');
         """)
 
         # Config por defecto
@@ -471,3 +489,75 @@ def stats_dashboard() -> dict:
             'ultimas_act':     ult_actvs,
             'proximas_ops':    prox_ops,
         }
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  DOCUMENTOS
+# ══════════════════════════════════════════════════════════════════════════════
+
+def guardar_documento(empresa_id: int, nombre: str, ruta: str, texto: str,
+                      tipo: str = 'pdf', tamanio_kb: int = 0,
+                      contacto_id: int = None) -> int:
+    with get_conn() as c:
+        cur = c.execute(
+            """INSERT INTO documentos(empresa_id, contacto_id, nombre, ruta, texto, tipo, tamanio_kb)
+               VALUES(?,?,?,?,?,?,?)""",
+            (empresa_id, contacto_id, nombre, ruta, texto, tipo, tamanio_kb)
+        )
+        doc_id = cur.lastrowid
+        c.execute(
+            "INSERT INTO documentos_fts(nombre, texto, empresa_id, doc_id) VALUES(?,?,?,?)",
+            (nombre, texto, empresa_id, doc_id)
+        )
+        return doc_id
+
+def listar_documentos(empresa_id: int) -> list:
+    with get_conn() as c:
+        return [dict(r) for r in c.execute(
+            "SELECT * FROM documentos WHERE empresa_id=? ORDER BY created_at DESC",
+            (empresa_id,)
+        ).fetchall()]
+
+def get_documento(doc_id: int) -> dict | None:
+    with get_conn() as c:
+        r = c.execute("SELECT * FROM documentos WHERE id=?", (doc_id,)).fetchone()
+        return dict(r) if r else None
+
+def eliminar_documento(doc_id: int):
+    with get_conn() as c:
+        doc = c.execute("SELECT empresa_id FROM documentos WHERE id=?", (doc_id,)).fetchone()
+        if doc:
+            c.execute("DELETE FROM documentos_fts WHERE doc_id=?", (doc_id,))
+            c.execute("DELETE FROM documentos WHERE id=?", (doc_id,))
+
+def buscar_documentos_fts(query: str, empresa_id: int = None, limite: int = 5) -> list:
+    with get_conn() as c:
+        if empresa_id is not None:
+            rows = c.execute(
+                """SELECT doc_id, snippet(documentos_fts, 1, '[', ']', '...', 20) as fragmento
+                   FROM documentos_fts
+                   WHERE documentos_fts MATCH ? AND empresa_id=?
+                   ORDER BY rank LIMIT ?""",
+                (query, empresa_id, limite)
+            ).fetchall()
+        else:
+            rows = c.execute(
+                """SELECT doc_id, snippet(documentos_fts, 1, '[', ']', '...', 20) as fragmento
+                   FROM documentos_fts
+                   WHERE documentos_fts MATCH ?
+                   ORDER BY rank LIMIT ?""",
+                (query, limite)
+            ).fetchall()
+        resultados = []
+        for r in rows:
+            doc = c.execute("SELECT id, nombre, empresa_id, created_at FROM documentos WHERE id=?",
+                            (r['doc_id'],)).fetchone()
+            if doc:
+                resultados.append({
+                    'doc_id':     doc['id'],
+                    'nombre':     doc['nombre'],
+                    'empresa_id': doc['empresa_id'],
+                    'fecha':      doc['created_at'][:10],
+                    'fragmento':  r['fragmento'],
+                })
+        return resultados

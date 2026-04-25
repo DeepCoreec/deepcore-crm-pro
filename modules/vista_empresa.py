@@ -1,4 +1,5 @@
-"""DeepCore CRM Pro — Vista 360° de una empresa (contactos + oportunidades)."""
+"""DeepCore CRM Pro — Vista 360° de una empresa (contactos + oportunidades + documentos)."""
+import os
 import customtkinter as ctk
 from tkinter import ttk
 import tkinter as tk
@@ -86,7 +87,7 @@ class VistaEmpresa(ctk.CTkToplevel):
         tab_bar.pack(fill='x', padx=24, pady=(12, 0))
 
         self._tab_btns: dict[str, ctk.CTkButton] = {}
-        for label in ('Contactos', 'Oportunidades'):
+        for label in ('Contactos', 'Oportunidades', 'Documentos'):
             btn = ctk.CTkButton(tab_bar, text=label, width=130, height=32, corner_radius=8,
                                 fg_color='transparent', hover_color=C['surface1'],
                                 text_color=C['text2'], font=ctk.CTkFont(size=12),
@@ -102,6 +103,8 @@ class VistaEmpresa(ctk.CTkToplevel):
         self._panel_contactos = self._build_tabla_contactos()
         # Panel Oportunidades
         self._panel_opor = self._build_tabla_opor()
+        # Panel Documentos
+        self._panel_docs = self._build_panel_docs()
 
         self._cambiar_tab('Contactos')
 
@@ -187,8 +190,10 @@ class VistaEmpresa(ctk.CTkToplevel):
             w.pack_forget()
         if label == 'Contactos':
             self._panel_contactos.pack(fill='both', expand=True)
-        else:
+        elif label == 'Oportunidades':
             self._panel_opor.pack(fill='both', expand=True)
+        else:
+            self._panel_docs.pack(fill='both', expand=True)
 
     # ── Datos ─────────────────────────────────────────────────────────────────
 
@@ -228,3 +233,17 @@ class VistaEmpresa(ctk.CTkToplevel):
         self._lbl_kpi_contactos.configure(text=str(len(contactos)))
         self._lbl_kpi_opor.configure(text=str(len(opors)))
         self._lbl_kpi_pipeline.configure(text=f"${pipeline_total:,.0f}")
+
+    def _build_panel_docs(self) -> ctk.CTkFrame:
+        from modules.panel_documentos import PanelDocumentos
+        import sys
+        if getattr(sys, 'frozen', False):
+            import os as _os
+            base = _os.path.join(_os.environ.get('APPDATA', _os.path.expanduser('~')), 'DeepCore CRM Pro')
+        else:
+            import os as _os
+            base = _os.path.dirname(_os.path.dirname(__file__))
+        docs_dir = _os.path.join(base, 'documentos')
+        frame = ctk.CTkFrame(self._contenedor, fg_color='transparent')
+        PanelDocumentos(frame, self.C, self._emp_id, docs_dir).pack(fill='both', expand=True)
+        return frame

@@ -3,3 +3,9 @@ reportlab>=4.0.0
 openpyxl>=3.1.0
 Pillow>=10.0.0
 pyinstaller>=6.0.0
+
+# Extracción de texto de documentos (opcional — mejora el módulo Documentos)
+pypdf>=4.0.0
+
+# LlamaIndex + Ollama para búsqueda semántica (opcional — requiere Ollama corriendo)
+# pip install llama-index-core llama-index-llms-ollama llama-index-embeddings-ollama

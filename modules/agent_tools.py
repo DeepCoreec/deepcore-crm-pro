@@ -148,6 +148,22 @@ TOOLS = [
             "type": "object",
             "properties": {}
         }
+    },
+    {
+        "name": "buscar_en_documentos",
+        "description": (
+            "Busca información dentro de los documentos adjuntos al CRM (contratos, propuestas, PDFs, etc.). "
+            "Úsalo cuando el usuario pregunte por el contenido de un contrato, una propuesta o cualquier archivo. "
+            "Si hay Ollama corriendo, usa IA semántica; sino usa búsqueda de texto."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "query":      {"type": "string",  "description": "Pregunta o texto a buscar en los documentos (requerido)"},
+                "empresa_id": {"type": "integer", "description": "Limitar búsqueda a una empresa específica (opcional)"}
+            },
+            "required": ["query"]
+        }
     }
 ]
 
@@ -318,6 +334,46 @@ def _obtener_resumen(p: dict) -> dict:
     }
 
 
+def _buscar_en_documentos(p: dict) -> dict:
+    from modules.doc_indexer import buscar_con_ia, ollama_disponible
+    query      = p.get('query', '')
+    empresa_id = p.get('empresa_id')
+
+    # Búsqueda FTS5 siempre disponible
+    hits = db.buscar_documentos_fts(query, empresa_id=empresa_id, limite=5)
+
+    if not hits:
+        return {"encontrado": False, "mensaje": "No se encontraron documentos con ese contenido."}
+
+    # Intentar IA semántica si Ollama está corriendo
+    if ollama_disponible():
+        doc_ids = [h['doc_id'] for h in hits]
+        documentos = []
+        for did in doc_ids:
+            doc = db.get_documento(did)
+            if doc and doc.get('texto'):
+                documentos.append({'nombre': doc['nombre'], 'texto': doc['texto']})
+
+        respuesta_ia = buscar_con_ia(query, documentos)
+        if respuesta_ia:
+            return {
+                "encontrado": True,
+                "modo": "IA semántica (Ollama)",
+                "respuesta": respuesta_ia,
+                "documentos_analizados": [h['nombre'] for h in hits],
+            }
+
+    # Fallback: resultados FTS5
+    return {
+        "encontrado": True,
+        "modo": "búsqueda de texto (FTS5)",
+        "resultados": [
+            {"documento": h['nombre'], "fragmento": h['fragmento'], "fecha": h['fecha']}
+            for h in hits
+        ],
+    }
+
+
 _EJECUTORES = {
     'buscar_contactos':            _buscar_contactos,
     'crear_contacto':              _crear_contacto,
@@ -329,6 +385,7 @@ _EJECUTORES = {
     'crear_actividad':             _crear_actividad,
     'listar_pendientes':           _listar_pendientes,
     'obtener_resumen_crm':         _obtener_resumen,
+    'buscar_en_documentos':        _buscar_en_documentos,
 }
 
 # Nombres legibles para el UI
@@ -343,4 +400,5 @@ NOMBRES_LEGIBLES = {
     'crear_actividad':              'Registrando actividad',
     'listar_pendientes':            'Consultando pendientes',
     'obtener_resumen_crm':          'Analizando CRM',
+    'buscar_en_documentos':         'Analizando documentos',
 }
